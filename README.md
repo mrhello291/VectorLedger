@@ -30,6 +30,7 @@ flowchart LR
 
 - Immutable document identity plus monotonic versions
 - Idempotent deletion and permission propagation
+- Immediate deletion or reversible scheduled deletion with quarantine
 - Metadata-based discovery of artifacts that were never registered
 - PostgreSQL ledger and append-only signed receipts
 - Connectors for PostgreSQL chunk tables, Qdrant, and Redis
@@ -105,6 +106,25 @@ vectorledger delete salary-policy --tenant acme
 vectorledger verify salary-policy --tenant acme
 ```
 
+Immediate deletion is the default. To quarantine a document now and hard-delete it
+after a three-day grace period:
+
+```bash
+vectorledger delete salary-policy --tenant acme --mode scheduled \
+  --grace-period-seconds 259200
+```
+
+Scheduled deletion immediately replaces downstream ACLs with an empty set and
+invalidates caches. If the source is restored before the deadline, restore access
+without rebuilding embeddings:
+
+```bash
+vectorledger restore salary-policy --tenant acme --principal group:hr
+```
+
+Restoring after an immediate or completed hard deletion returns
+`"reingestion_required": true`; the RAG pipeline must rebuild the artifacts.
+
 Example result:
 
 ```json
@@ -160,10 +180,15 @@ make lint
 | `VL_RECEIPT_SECRET` | Receipt HMAC secret | development-only value |
 | `VL_API_KEY` | Require `X-API-Key` | disabled |
 | `VL_RECONCILE_INTERVAL_SECONDS` | Anti-entropy interval | `60` |
+| `VL_DELETION_GRACE_PERIOD_SECONDS` | Default scheduled-deletion delay | `259200` (3 days) |
 
 ## Safety model
 
 Deletion is safe to retry. A target is reported clean only after a post-operation discovery scan returns no matching records. Connector failures and unavailable registered targets produce a `failed` receipt. VectorLedger does not equate an accepted delete request with verified deletion.
+
+For scheduled deletion, a `verified` receipt with `desired_state: pending_deletion`
+proves quarantine—not hard deletion. After `purge_after`, anti-entropy transitions the
+document to `deleted`, removes the artifacts, and emits a deletion receipt.
 
 See [architecture](docs/architecture.md), [connector contract](docs/connectors.md), and [security model](SECURITY.md).
 

@@ -13,9 +13,16 @@ Please use GitHub's private vulnerability reporting for this repository. Do not 
 - Preserve both `tenant_id` and `document_id` on every derived record.
 - Restrict connector table and collection configuration to operators.
 - Monitor failed receipts and anti-entropy errors.
+- Use scheduled deletion only when every retrieval path enforces `allowed_principals`
+  with deny-by-default behavior. An empty ACL must never mean public access. If that
+  guarantee is unavailable, use the default immediate deletion mode.
 
 ## Threat-model boundary
 
 VectorLedger detects target records addressable by configured metadata. It cannot reliably discover copies that have no stable identifiers, opaque generated text that cannot be traced to a source, offline backups, model weights, or data exported outside configured systems.
+
+A verified `pending_deletion` receipt proves that configured connectors observed the
+quarantine ACL or cache invalidation. It does not prove hard deletion; only a verified
+`deleted` receipt makes that claim.
 
 The included HMAC receipt is tamper-evident for parties that do not possess the signing secret. For stronger non-repudiation, implement a KMS-backed asymmetric signer and independent timestamping.

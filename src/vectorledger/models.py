@@ -12,7 +12,13 @@ def utcnow() -> datetime:
 
 class DesiredState(StrEnum):
     ACTIVE = "active"
+    PENDING_DELETION = "pending_deletion"
     DELETED = "deleted"
+
+
+class DeletionMode(StrEnum):
+    IMMEDIATE = "immediate"
+    SCHEDULED = "scheduled"
 
 
 class ArtifactState(StrEnum):
@@ -41,6 +47,9 @@ class Document:
     content_hash: str | None = None
     desired_state: DesiredState = DesiredState.ACTIVE
     allowed_principals: tuple[str, ...] = ()
+    deletion_mode: DeletionMode | None = None
+    deletion_requested_at: datetime | None = None
+    purge_after: datetime | None = None
     updated_at: datetime = field(default_factory=utcnow)
 
     @property
@@ -81,12 +90,16 @@ class Receipt:
     status: VerificationStatus
     checked_at: datetime
     targets: list[TargetResult]
+    deletion_mode: str | None = None
+    purge_after: datetime | None = None
     signature: str = ""
 
     def payload(self) -> dict[str, Any]:
         value = asdict(self)
         value.pop("signature")
         value["checked_at"] = self.checked_at.isoformat()
+        if self.purge_after is not None:
+            value["purge_after"] = self.purge_after.isoformat()
         value["status"] = self.status.value
         return value
 

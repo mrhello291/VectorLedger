@@ -2,6 +2,12 @@
 
 All notable changes are documented here.
 
+## Unreleased
+
+- Add immediate and scheduled deletion modes.
+- Quarantine scheduled deletions with empty ACLs before their purge deadline.
+- Add document restoration with an explicit re-ingestion signal after hard deletion.
+
 ## 0.1.0 — 2026-09-20
 
 - Initial self-hosted reconciliation controller

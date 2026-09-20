@@ -65,9 +65,33 @@ class VectorLedgerClient:
             },
         )
 
-    def delete_document(self, document_id: str, version: int | None = None) -> dict[str, Any]:
+    def delete_document(
+        self,
+        document_id: str,
+        version: int | None = None,
+        mode: str = "immediate",
+        grace_period_seconds: int | None = None,
+    ) -> dict[str, Any]:
         return self._request(
-            "POST", f"/v1/documents/{document_id}/delete", json={"version": version}
+            "POST",
+            f"/v1/documents/{document_id}/delete",
+            json={
+                "version": version,
+                "mode": mode,
+                "grace_period_seconds": grace_period_seconds,
+            },
+        )
+
+    def restore_document(
+        self,
+        document_id: str,
+        allowed_principals: list[str],
+        version: int | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/v1/documents/{document_id}/restore",
+            json={"allowed_principals": allowed_principals, "version": version},
         )
 
     def update_permissions(

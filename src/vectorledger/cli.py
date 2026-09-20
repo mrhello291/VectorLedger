@@ -7,6 +7,8 @@ import httpx
 import typer
 import uvicorn
 
+from vectorledger.models import DeletionMode
+
 app = typer.Typer(help="VectorLedger RAG consistency controller")
 
 
@@ -40,12 +42,32 @@ def delete_document(
     tenant: Annotated[str, typer.Option("--tenant", "-t")],
     url: str = "http://localhost:8080",
     api_key: str | None = None,
+    mode: DeletionMode = DeletionMode.IMMEDIATE,
+    grace_period_seconds: int | None = None,
 ) -> None:
-    """Tombstone, propagate, and verify a document deletion."""
+    """Immediately delete or quarantine and schedule a document deletion."""
     response = httpx.post(
         f"{url}/v1/documents/{document_id}/delete",
         headers=_headers(tenant, api_key),
-        json={},
+        json={"mode": mode.value, "grace_period_seconds": grace_period_seconds},
+        timeout=60,
+    )
+    _print_response(response)
+
+
+@app.command("restore")
+def restore_document(
+    document_id: str,
+    tenant: Annotated[str, typer.Option("--tenant", "-t")],
+    principal: Annotated[list[str], typer.Option("--principal", "-p")],
+    url: str = "http://localhost:8080",
+    api_key: str | None = None,
+) -> None:
+    """Cancel scheduled deletion or reactivate a hard-deleted document."""
+    response = httpx.post(
+        f"{url}/v1/documents/{document_id}/restore",
+        headers=_headers(tenant, api_key),
+        json={"allowed_principals": principal},
         timeout=60,
     )
     _print_response(response)

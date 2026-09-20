@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
+from datetime import timedelta
 from uuid import uuid4
 
 from vectorledger.connectors.base import Connector
 from vectorledger.models import (
     Artifact,
     ArtifactState,
+    DeletionMode,
     DesiredState,
     Document,
     DocumentKey,
@@ -24,19 +26,32 @@ class NotFoundError(LookupError):
     pass
 
 
+class InvalidStateError(ValueError):
+    pass
+
+
 class VectorLedgerService:
     def __init__(
         self,
         store: LedgerStore,
         connectors: dict[str, Connector],
         signer: ReceiptSigner,
+        scheduled_deletion_grace: timedelta = timedelta(days=3),
     ) -> None:
+        if scheduled_deletion_grace <= timedelta(0):
+            raise ValueError("scheduled deletion grace period must be positive")
         self.store = store
         self.connectors = connectors
         self.signer = signer
+        self.scheduled_deletion_grace = scheduled_deletion_grace
         self._document_locks: defaultdict[DocumentKey, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def register_document(self, document: Document) -> Document:
+        current = await self.store.get_document(document.key)
+        if current and current.desired_state != DesiredState.ACTIVE:
+            raise InvalidStateError(
+                "document is pending deletion or deleted; restore it before registration"
+            )
         return await self.store.upsert_document(document)
 
     async def register_artifact(self, artifact: Artifact) -> Artifact:
@@ -45,15 +60,45 @@ class VectorLedgerService:
         )
         if not document:
             raise NotFoundError("register the document before registering artifacts")
+        if document.desired_state != DesiredState.ACTIVE:
+            raise InvalidStateError(
+                "document is pending deletion or deleted; restore it before adding artifacts"
+            )
         if artifact.document_version > document.version:
             raise ValueError("artifact refers to a future document version")
         return await self.store.add_artifact(artifact)
 
-    async def request_deletion(self, key: DocumentKey, version: int | None = None) -> Receipt:
+    async def request_deletion(
+        self,
+        key: DocumentKey,
+        version: int | None = None,
+        mode: DeletionMode = DeletionMode.IMMEDIATE,
+        grace_period: timedelta | None = None,
+    ) -> Receipt:
         document = await self._get_document(key)
+
+        # A verified hard deletion cannot become a recoverable scheduled deletion.
+        # Call restore_document and re-ingest instead.
+        if document.desired_state == DesiredState.DELETED:
+            return await self.reconcile(key)
+
+        now = utcnow()
         document.version = version or (document.version + 1)
-        document.desired_state = DesiredState.DELETED
-        document.updated_at = utcnow()
+        document.deletion_mode = mode
+        document.deletion_requested_at = document.deletion_requested_at or now
+
+        if mode == DeletionMode.IMMEDIATE:
+            document.desired_state = DesiredState.DELETED
+            document.purge_after = None
+        else:
+            grace = grace_period or self.scheduled_deletion_grace
+            if grace <= timedelta(0):
+                raise ValueError("scheduled deletion grace period must be positive")
+            document.desired_state = DesiredState.PENDING_DELETION
+            document.allowed_principals = ()
+            document.purge_after = document.purge_after or (now + grace)
+
+        document.updated_at = now
         await self.store.upsert_document(document)
         return await self.reconcile(key)
 
@@ -61,11 +106,37 @@ class VectorLedgerService:
         self, key: DocumentKey, allowed_principals: tuple[str, ...], version: int | None = None
     ) -> Receipt:
         document = await self._get_document(key)
+        if document.desired_state != DesiredState.ACTIVE:
+            raise InvalidStateError(
+                "document is pending deletion or deleted; use the restore endpoint"
+            )
         document.version = version or (document.version + 1)
         document.allowed_principals = allowed_principals
         document.updated_at = utcnow()
         await self.store.upsert_document(document)
         return await self.reconcile(key)
+
+    async def restore_document(
+        self,
+        key: DocumentKey,
+        allowed_principals: tuple[str, ...],
+        version: int | None = None,
+    ) -> tuple[Document, Receipt | None, bool]:
+        document = await self._get_document(key)
+        reingestion_required = document.desired_state == DesiredState.DELETED
+        document.version = version or (document.version + 1)
+        document.desired_state = DesiredState.ACTIVE
+        document.allowed_principals = allowed_principals
+        document.deletion_mode = None
+        document.deletion_requested_at = None
+        document.purge_after = None
+        document.updated_at = utcnow()
+        document = await self.store.upsert_document(document)
+
+        # Scheduled deletion only quarantines records, so ACLs can be restored in
+        # place. Hard-deleted records must be rebuilt by the ingestion pipeline.
+        receipt = None if reingestion_required else await self.reconcile(key)
+        return document, receipt, reingestion_required
 
     async def verify(self, key: DocumentKey) -> Receipt:
         return await self.reconcile(key, mutate=False)
@@ -73,6 +144,15 @@ class VectorLedgerService:
     async def reconcile(self, key: DocumentKey, mutate: bool = True) -> Receipt:
         async with self._document_locks[key]:
             document = await self._get_document(key)
+            if (
+                mutate
+                and document.desired_state == DesiredState.PENDING_DELETION
+                and document.purge_after is not None
+                and document.purge_after <= utcnow()
+            ):
+                document.desired_state = DesiredState.DELETED
+                document.updated_at = utcnow()
+                document = await self.store.upsert_document(document)
             artifacts = await self.store.list_artifacts(key)
             by_target: defaultdict[str, list[Artifact]] = defaultdict(list)
             for artifact in artifacts:
@@ -104,6 +184,10 @@ class VectorLedgerService:
                 status=status,
                 checked_at=utcnow(),
                 targets=results,
+                deletion_mode=(
+                    document.deletion_mode.value if document.deletion_mode is not None else None
+                ),
+                purge_after=document.purge_after,
             )
             receipt.signature = self.signer.sign(receipt)
             return await self.store.save_receipt(receipt)

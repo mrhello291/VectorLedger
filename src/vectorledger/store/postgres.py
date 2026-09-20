@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any, cast
 
 from psycopg.rows import dict_row
@@ -9,6 +10,7 @@ from psycopg_pool import AsyncConnectionPool
 from vectorledger.models import (
     Artifact,
     ArtifactState,
+    DeletionMode,
     DesiredState,
     Document,
     DocumentKey,
@@ -24,11 +26,10 @@ class PostgresStore:
 
     async def initialize(self) -> None:
         await self.pool.open()
-        migration = (
-            __import__("pathlib").Path(__file__).parent.parent / "migrations" / "001_init.sql"
-        )
+        migration_dir = __import__("pathlib").Path(__file__).parent.parent / "migrations"
         async with self.pool.connection() as connection:
-            await connection.execute(migration.read_text())
+            for migration in sorted(migration_dir.glob("*.sql")):
+                await connection.execute(migration.read_text())
 
     async def close(self) -> None:
         await self.pool.close()
@@ -37,14 +38,17 @@ class PostgresStore:
         query = """
             INSERT INTO vl_documents
                 (tenant_id, document_id, version, source_uri, content_hash, desired_state,
-                 allowed_principals, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                 allowed_principals, deletion_mode, deletion_requested_at, purge_after, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (tenant_id, document_id) DO UPDATE SET
                 version = EXCLUDED.version,
                 source_uri = EXCLUDED.source_uri,
                 content_hash = EXCLUDED.content_hash,
                 desired_state = EXCLUDED.desired_state,
                 allowed_principals = EXCLUDED.allowed_principals,
+                deletion_mode = EXCLUDED.deletion_mode,
+                deletion_requested_at = EXCLUDED.deletion_requested_at,
+                purge_after = EXCLUDED.purge_after,
                 updated_at = EXCLUDED.updated_at
             WHERE vl_documents.version <= EXCLUDED.version
             RETURNING *
@@ -63,6 +67,9 @@ class PostgresStore:
                     document.content_hash,
                     document.desired_state.value,
                     list(document.allowed_principals),
+                    document.deletion_mode.value if document.deletion_mode else None,
+                    document.deletion_requested_at,
+                    document.purge_after,
                     document.updated_at,
                 ),
             )
@@ -186,6 +193,12 @@ class PostgresStore:
             status=VerificationStatus(payload["status"]),
             checked_at=row["checked_at"],
             targets=[TargetResult(**target) for target in payload["targets"]],
+            deletion_mode=payload.get("deletion_mode"),
+            purge_after=(
+                datetime.fromisoformat(payload["purge_after"])
+                if payload.get("purge_after")
+                else None
+            ),
             signature=row["signature"],
         )
 
@@ -199,6 +212,11 @@ class PostgresStore:
             content_hash=str(row["content_hash"]) if row["content_hash"] else None,
             desired_state=DesiredState(str(row["desired_state"])),
             allowed_principals=tuple(row["allowed_principals"] or []),  # type: ignore[arg-type]
+            deletion_mode=(
+                DeletionMode(str(row["deletion_mode"])) if row.get("deletion_mode") else None
+            ),
+            deletion_requested_at=row.get("deletion_requested_at"),  # type: ignore[arg-type]
+            purge_after=row.get("purge_after"),  # type: ignore[arg-type]
             updated_at=row["updated_at"],  # type: ignore[arg-type]
         )
 
