@@ -1,5 +1,8 @@
 # VectorLedger
 
+[![CI](https://github.com/mrhello291/VectorLedger/actions/workflows/ci.yml/badge.svg)](https://github.com/mrhello291/VectorLedger/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 **Prove that deleted or restricted RAG data is no longer retrievable.**
 
 VectorLedger is a self-hosted consistency controller for retrieval-augmented generation systems. It receives document lifecycle changes, reconciles derived data across stores, independently scans for stale records, and emits tamper-evident verification receipts.
