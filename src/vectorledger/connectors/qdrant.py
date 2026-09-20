@@ -52,13 +52,40 @@ class QdrantConnector:
         return len(artifacts)
 
     async def discover(self, document: Document) -> list[dict[str, object]]:
-        response = await self.client.post(
-            f"/collections/{self.collection}/points/scroll",
-            json={"filter": self._filter(document), "limit": 256, "with_payload": True},
-        )
-        response.raise_for_status()
-        points = response.json().get("result", {}).get("points", [])
-        return [{"id": point["id"], "payload": point.get("payload", {})} for point in points]
+        points: list[dict[str, object]] = []
+        seen_ids: set[object] = set()
+        seen_offsets: set[object] = set()
+        offset: object | None = None
+
+        while True:
+            request: dict[str, object] = {
+                "filter": self._filter(document),
+                "limit": 256,
+                "with_payload": True,
+            }
+            if offset is not None:
+                request["offset"] = offset
+
+            response = await self.client.post(
+                f"/collections/{self.collection}/points/scroll",
+                json=request,
+            )
+            response.raise_for_status()
+            result = response.json().get("result", {})
+            for point in result.get("points", []):
+                point_id = point["id"]
+                if point_id not in seen_ids:
+                    seen_ids.add(point_id)
+                    points.append({"id": point_id, "payload": point.get("payload", {})})
+
+            next_offset = result.get("next_page_offset")
+            if next_offset is None:
+                return points
+            if next_offset in seen_offsets:
+                raise RuntimeError(f"Qdrant repeated scroll offset {next_offset!r}")
+
+            seen_offsets.add(next_offset)
+            offset = next_offset
 
     async def close(self) -> None:
         await self.client.aclose()
