@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from datetime import timedelta
 
 from vectorledger.connectors.fake import FakeConnector
 from vectorledger.models import (
     Artifact,
     ArtifactState,
+    DeletionMode,
     DesiredState,
     Document,
     DocumentKey,
@@ -15,7 +17,7 @@ from vectorledger.models import (
     utcnow,
 )
 from vectorledger.receipts import ReceiptSigner
-from vectorledger.service import NotFoundError, VectorLedgerService
+from vectorledger.service import InvalidStateError, NotFoundError, VectorLedgerService
 from vectorledger.store.memory import MemoryStore
 
 
@@ -105,6 +107,98 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(receipt.status, VerificationStatus.VERIFIED)
         self.assertEqual(self.qdrant.records[0]["allowed_principals"], ["team:hr"])
         self.assertEqual(self.redis.records, [])
+
+        restored = await self.service.change_permissions(
+            DocumentKey("acme", "handbook"), ("team:all",)
+        )
+
+        self.assertEqual(restored.status, VerificationStatus.VERIFIED)
+        self.assertEqual(self.qdrant.records[0]["allowed_principals"], ["team:all"])
+        self.assertEqual(self.qdrant.delete_calls, 0)
+
+    async def test_scheduled_deletion_quarantines_before_purge(self) -> None:
+        receipt = await self.service.request_deletion(
+            DocumentKey("acme", "handbook"),
+            mode=DeletionMode.SCHEDULED,
+            grace_period=timedelta(days=3),
+        )
+
+        document = await self.store.get_document(DocumentKey("acme", "handbook"))
+        assert document is not None
+        self.assertEqual(document.desired_state, DesiredState.PENDING_DELETION)
+        self.assertEqual(document.deletion_mode, DeletionMode.SCHEDULED)
+        self.assertIsNotNone(document.purge_after)
+        self.assertEqual(receipt.desired_state, "pending_deletion")
+        self.assertEqual(receipt.deletion_mode, "scheduled")
+        self.assertIsNotNone(receipt.purge_after)
+        self.assertEqual(receipt.status, VerificationStatus.VERIFIED)
+        self.assertEqual(self.qdrant.records[0]["allowed_principals"], [])
+        self.assertEqual(self.qdrant.delete_calls, 0)
+        self.assertEqual(self.redis.records, [])
+
+        with self.assertRaises(InvalidStateError):
+            await self.service.register_artifact(
+                Artifact("late", "acme", "handbook", 2, "qdrant", {"id": "late"})
+            )
+
+    async def test_scheduled_deletion_can_restore_without_reingestion(self) -> None:
+        await self.service.request_deletion(
+            DocumentKey("acme", "handbook"), mode=DeletionMode.SCHEDULED
+        )
+
+        document, receipt, reingestion_required = await self.service.restore_document(
+            DocumentKey("acme", "handbook"), ("team:all",)
+        )
+
+        self.assertEqual(document.desired_state, DesiredState.ACTIVE)
+        self.assertIsNone(document.purge_after)
+        self.assertFalse(reingestion_required)
+        self.assertIsNotNone(receipt)
+        self.assertEqual(self.qdrant.records[0]["allowed_principals"], ["team:all"])
+
+    async def test_repeated_scheduled_request_does_not_extend_deadline(self) -> None:
+        await self.service.request_deletion(
+            DocumentKey("acme", "handbook"), mode=DeletionMode.SCHEDULED
+        )
+        first = await self.store.get_document(DocumentKey("acme", "handbook"))
+        assert first is not None
+
+        await self.service.request_deletion(
+            DocumentKey("acme", "handbook"), mode=DeletionMode.SCHEDULED
+        )
+        second = await self.store.get_document(DocumentKey("acme", "handbook"))
+
+        assert second is not None
+        self.assertEqual(second.purge_after, first.purge_after)
+
+    async def test_scheduled_deletion_hard_deletes_after_deadline(self) -> None:
+        await self.service.request_deletion(
+            DocumentKey("acme", "handbook"), mode=DeletionMode.SCHEDULED
+        )
+        document = await self.store.get_document(DocumentKey("acme", "handbook"))
+        assert document is not None
+        document.purge_after = utcnow() - timedelta(seconds=1)
+        await self.store.upsert_document(document)
+
+        receipt = await self.service.reconcile(DocumentKey("acme", "handbook"))
+        document = await self.store.get_document(DocumentKey("acme", "handbook"))
+
+        assert document is not None
+        self.assertEqual(document.desired_state, DesiredState.DELETED)
+        self.assertEqual(receipt.desired_state, "deleted")
+        self.assertEqual(receipt.status, VerificationStatus.VERIFIED)
+        self.assertEqual(self.qdrant.records, [])
+
+    async def test_restore_after_immediate_deletion_requires_reingestion(self) -> None:
+        await self.service.request_deletion(DocumentKey("acme", "handbook"))
+
+        document, receipt, reingestion_required = await self.service.restore_document(
+            DocumentKey("acme", "handbook"), ("team:all",)
+        )
+
+        self.assertEqual(document.desired_state, DesiredState.ACTIVE)
+        self.assertTrue(reingestion_required)
+        self.assertIsNone(receipt)
 
     async def test_registered_target_without_connector_is_failure(self) -> None:
         await self.service.register_artifact(

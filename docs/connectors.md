@@ -15,6 +15,8 @@ Requirements:
 - Treat timeouts and ambiguous responses as failures.
 - Discover independently of registered artifact locations.
 - Return only after the remote operation has completed when the target supports a wait option.
+- Treat an empty `allowed_principals` value as deny-all. A connector or retrieval
+  system where an empty ACL means public access must not enable scheduled deletion.
 
 ## Included adapters
 

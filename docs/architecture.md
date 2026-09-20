@@ -2,7 +2,7 @@
 
 ## Desired state and actual state
 
-The document ledger contains the desired state: active with a specific ACL, or deleted. Each connector reports actual records discovered in its target. Reconciliation attempts to make actual state match desired state and then performs a fresh discovery pass.
+The document ledger contains the desired state: active with a specific ACL, pending deletion with an empty ACL and a purge deadline, or deleted. Each connector reports actual records discovered in its target. Reconciliation attempts to make actual state match desired state and then performs a fresh discovery pass.
 
 ```mermaid
 flowchart TD
@@ -21,7 +21,7 @@ flowchart TD
 
 ## Data model
 
-- `vl_documents`: tenant-scoped source identity, version, desired state, source URI, hash, and ACL.
+- `vl_documents`: tenant-scoped source identity, version, desired state, source URI, hash, ACL, deletion mode, request time, and purge deadline.
 - `vl_artifacts`: optional lineage pointers reported by ingestion systems.
 - `vl_receipts`: immutable reconciliation results and signatures.
 
@@ -38,6 +38,20 @@ flowchart TD
 7. Sign and persist the complete result.
 
 All connector mutations must be idempotent. Periodic anti-entropy runs repair transient partial failures.
+
+## Deletion modes
+
+`immediate` is the default and removes derived artifacts during the first reconciliation.
+
+`scheduled` first moves the document to `pending_deletion`. Reconciliation sets the
+downstream ACL to empty and invalidates caches, making the document unavailable while
+retaining restorable chunks. When `purge_after` passes, anti-entropy changes the desired
+state to `deleted` and performs the hard deletion.
+
+Restoring a pending deletion requires the source system to provide the current
+authoritative ACL; VectorLedger never guesses which principals should regain access.
+Restoring after hard deletion is allowed, but the response requires the ingestion
+pipeline to regenerate chunks and embeddings.
 
 ## Consistency
 

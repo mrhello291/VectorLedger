@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
@@ -13,9 +14,9 @@ from vectorledger.connectors.base import Connector
 from vectorledger.connectors.postgres import PostgresConnector
 from vectorledger.connectors.qdrant import QdrantConnector
 from vectorledger.connectors.redis import RedisConnector
-from vectorledger.models import Artifact, Document, DocumentKey
+from vectorledger.models import Artifact, DeletionMode, Document, DocumentKey
 from vectorledger.receipts import ReceiptSigner
-from vectorledger.service import NotFoundError, VectorLedgerService
+from vectorledger.service import InvalidStateError, NotFoundError, VectorLedgerService
 from vectorledger.store.postgres import PostgresStore
 from vectorledger.worker import anti_entropy_loop
 
@@ -37,9 +38,16 @@ class ArtifactInput(BaseModel):
 
 class DeleteInput(BaseModel):
     version: int | None = Field(default=None, ge=1)
+    mode: DeletionMode = DeletionMode.IMMEDIATE
+    grace_period_seconds: int | None = Field(default=None, ge=60, le=2_592_000)
 
 
 class PermissionInput(BaseModel):
+    allowed_principals: list[str]
+    version: int | None = Field(default=None, ge=1)
+
+
+class RestoreInput(BaseModel):
     allowed_principals: list[str]
     version: int | None = Field(default=None, ge=1)
 
@@ -71,7 +79,10 @@ def create_app(
     if service is None:
         store = PostgresStore(config.database_url)
         service = VectorLedgerService(
-            store, _connectors(config), ReceiptSigner(config.receipt_secret)
+            store,
+            _connectors(config),
+            ReceiptSigner(config.receipt_secret),
+            timedelta(seconds=config.deletion_grace_period_seconds),
         )
 
     @asynccontextmanager
@@ -119,6 +130,10 @@ def create_app(
     async def not_found(_: Request, exc: NotFoundError) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
 
+    @app.exception_handler(InvalidStateError)
+    async def invalid_state(_: Request, exc: InvalidStateError) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
     @app.get("/healthz", include_in_schema=False)
     async def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -164,8 +179,30 @@ def create_app(
         document_id: str, body: DeleteInput, tenant_id: Tenant, svc: Service
     ) -> dict[str, object]:
         return (
-            await svc.request_deletion(DocumentKey(tenant_id, document_id), body.version)
+            await svc.request_deletion(
+                DocumentKey(tenant_id, document_id),
+                body.version,
+                body.mode,
+                timedelta(seconds=body.grace_period_seconds)
+                if body.grace_period_seconds is not None
+                else None,
+            )
         ).as_dict()
+
+    @app.post("/v1/documents/{document_id}/restore", dependencies=[Depends(authenticate)])
+    async def restore_document(
+        document_id: str, body: RestoreInput, tenant_id: Tenant, svc: Service
+    ) -> dict[str, object]:
+        document, receipt, reingestion_required = await svc.restore_document(
+            DocumentKey(tenant_id, document_id),
+            tuple(body.allowed_principals),
+            body.version,
+        )
+        return {
+            "document": asdict(document),
+            "reingestion_required": reingestion_required,
+            "receipt": receipt.as_dict() if receipt else None,
+        }
 
     @app.put("/v1/documents/{document_id}/permissions", dependencies=[Depends(authenticate)])
     async def update_permissions(
