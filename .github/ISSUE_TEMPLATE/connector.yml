@@ -1,0 +1,29 @@
+name: Connector proposal
+description: Propose support for another RAG store or source system
+title: "[Connector]: "
+labels: ["connector", "help wanted"]
+body:
+  - type: input
+    id: system
+    attributes:
+      label: System
+      placeholder: Azure AI Search, Elasticsearch, Milvus, SharePoint...
+    validations:
+      required: true
+  - type: textarea
+    id: identity
+    attributes:
+      label: Lineage and deletion APIs
+      description: Explain how tenant/document IDs can be stored, discovered, deleted, and verified.
+    validations:
+      required: true
+  - type: textarea
+    id: permission
+    attributes:
+      label: Permission propagation
+      description: Explain whether ACLs can be updated or cached data must be invalidated.
+  - type: textarea
+    id: testing
+    attributes:
+      label: Proposed integration test
+      description: Describe success, partial failure, retry, and orphan-discovery cases.

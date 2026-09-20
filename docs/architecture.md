@@ -4,17 +4,19 @@
 
 The document ledger contains the desired state: active with a specific ACL, or deleted. Each connector reports actual records discovered in its target. Reconciliation attempts to make actual state match desired state and then performs a fresh discovery pass.
 
-```text
-Lifecycle API ──► PostgreSQL ledger ──► reconciler
-                                          │
-                     ┌────────────────────┼────────────────────┐
-                     ▼                    ▼                    ▼
-               PostgreSQL target       Qdrant               Redis
-                     │                    │                    │
-                     └──────── discovery results ─────────────┘
-                                          │
-                                          ▼
-                                  signed audit receipt
+```mermaid
+flowchart TD
+    E[Lifecycle API] --> L[(PostgreSQL ledger)]
+    L --> C[Reconciliation controller]
+    C --> P[(PostgreSQL target)]
+    C --> Q[(Qdrant)]
+    C --> R[(Redis)]
+    P -- discover actual state --> C
+    Q -- discover actual state --> C
+    R -- discover actual state --> C
+    C --> X{All postconditions hold?}
+    X -- yes --> S[Signed verified receipt]
+    X -- no --> F[Failed receipt + retry]
 ```
 
 ## Data model

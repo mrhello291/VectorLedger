@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose a control-plane, verification, security, or observability improvement
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Failure mode
+      description: What real RAG consistency or security failure does this prevent?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Verification postcondition
+      description: What observable evidence proves that the operation succeeded?
+    validations:
+      required: true

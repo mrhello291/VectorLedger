@@ -2,6 +2,9 @@
 
 [![CI](https://github.com/mrhello291/VectorLedger/actions/workflows/ci.yml/badge.svg)](https://github.com/mrhello291/VectorLedger/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Container](https://img.shields.io/badge/ghcr.io-vectorledger-2496ED?logo=docker)](https://github.com/mrhello291/VectorLedger/pkgs/container/vectorledger)
+
+![VectorLedger social preview](docs/assets/vectorledger-social-preview.png)
 
 **Prove that deleted or restricted RAG data is no longer retrievable.**
 
@@ -9,15 +12,18 @@ VectorLedger is a self-hosted consistency controller for retrieval-augmented gen
 
 It does not replace an ingestion pipeline. It supervises the copies that pipeline creates.
 
-```text
- Source document        Company's existing RAG pipeline
-      │                         │
-      └── lifecycle event ──────┼──────────────┐
-                                │              │
-                        chunks / vectors / caches
-                                │              │
-                                ▼              ▼
-                          VectorLedger ──► reconcile ──► verify ──► signed receipt
+```mermaid
+flowchart LR
+    S[Source document] --> I[Existing RAG pipeline]
+    I --> P[(PostgreSQL chunks)]
+    I --> Q[(Vector database)]
+    I --> R[(Cache)]
+    S -- delete / ACL event --> V[VectorLedger]
+    V -- reconcile --> P
+    V -- reconcile --> Q
+    V -- invalidate --> R
+    P & Q & R -- independent scan --> V
+    V --> A[Signed verification receipt]
 ```
 
 ## What works in this MVP
@@ -32,6 +38,8 @@ It does not replace an ingestion pipeline. It supervises the copies that pipelin
 - CLI, Docker Compose demonstration, unit tests, API tests, linting, and CI
 
 ## Five-minute demo
+
+![VectorLedger deletion demo](docs/assets/vectorledger-demo.gif)
 
 Requirements: Docker with Compose.
 
@@ -125,6 +133,12 @@ cp .env.example .env
 vectorledger serve
 ```
 
+Or run the published container:
+
+```bash
+docker pull ghcr.io/mrhello291/vectorledger:0.1.0
+```
+
 Run quality checks:
 
 ```bash
@@ -153,10 +167,33 @@ Deletion is safe to retry. A target is reported clean only after a post-operatio
 
 See [architecture](docs/architecture.md), [connector contract](docs/connectors.md), and [security model](SECURITY.md).
 
+## How it differs
+
+| Capability | Ingestion framework | One-off delete script | VectorLedger |
+|---|---:|---:|---:|
+| Parse, chunk, and embed documents | Yes | No | No |
+| Record cross-store lineage | Sometimes | Rarely | Yes |
+| Retry partial deletion safely | Pipeline-specific | Usually no | Yes |
+| Discover unregistered stale records | Rarely | No | Yes |
+| Periodic anti-entropy repair | Rarely | No | Yes |
+| Verify actual post-deletion state | Rarely | Usually trusts API success | Yes |
+| Produce a signed audit receipt | No | No | Yes |
+
+VectorLedger complements LangChain, LlamaIndex, Haystack, and custom ingestion systems. It does not compete with their parsing or retrieval features.
+
+## Integrations
+
+- [LangChain tracked-ingestion example](examples/langchain/README.md)
+- PostgreSQL/pgvector-compatible chunk tables
+- Qdrant payload-filter discovery
+- Redis cache invalidation
+
+See the [roadmap](ROADMAP.md) for Azure AI Search, Elasticsearch, Milvus, retrieval probes, and KMS-backed receipts.
+
 ## Current boundaries
 
 This is an MVP, not a compliance certification. HMAC receipts prove possession of the configured secret, not an independent third-party timestamp. Retrieval-path probes, KMS/asymmetric signatures, source watchers, durable job leases, pagination beyond the first 256 Qdrant points, and more connectors are logical next milestones.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under Apache-2.0.
+Issues labeled [`good first issue`](https://github.com/mrhello291/VectorLedger/labels/good%20first%20issue) are designed for new contributors. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Licensed under Apache-2.0.
