@@ -1,0 +1,75 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: vectorledger
+      POSTGRES_USER: vectorledger
+      POSTGRES_PASSWORD: vectorledger
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vectorledger"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./demo/init.sql:/docker-entrypoint-initdb.d/10-demo.sql:ro
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.5
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  vectorledger:
+    build: .
+    environment:
+      VL_DATABASE_URL: postgresql://vectorledger:vectorledger@postgres:5432/vectorledger
+      VL_TARGET_POSTGRES_URL: postgresql://vectorledger:vectorledger@postgres:5432/vectorledger
+      VL_QDRANT_URL: http://qdrant:6333
+      VL_QDRANT_COLLECTION: rag_chunks
+      VL_REDIS_URL: redis://redis:6379/0
+      VL_RECEIPT_SECRET: demo-only-receipt-signing-secret
+      VL_RECONCILE_INTERVAL_SECONDS: "30"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  demo:
+    build: .
+    entrypoint: ["python", "/app/demo/run_demo.py"]
+    environment:
+      VL_API_URL: http://vectorledger:8080
+      VL_TARGET_POSTGRES_URL: postgresql://vectorledger:vectorledger@postgres:5432/vectorledger
+      VL_QDRANT_URL: http://qdrant:6333
+      VL_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - vectorledger
+    profiles: ["demo"]
+
+volumes:
+  postgres-data:
+  qdrant-data:
+  redis-data:
