@@ -8,9 +8,16 @@ The document ledger contains the desired state: active with a specific ACL, pend
 flowchart TD
     E[Lifecycle API] --> L[(PostgreSQL ledger)]
     L --> C[Reconciliation controller]
-    C --> P[(PostgreSQL target)]
-    C --> Q[(Qdrant)]
-    C --> R[(Redis)]
+    C --> M{Desired state}
+    M -- active --> A[Propagate current ACL]
+    M -- pending deletion --> QN[Empty ACL + invalidate cache]
+    M -- deleted --> HD[Hard delete]
+    A --> T[Target connectors]
+    QN --> T
+    HD --> T
+    T --> P[(PostgreSQL target)]
+    T --> Q[(Qdrant)]
+    T --> R[(Redis)]
     P -- discover actual state --> C
     Q -- discover actual state --> C
     R -- discover actual state --> C

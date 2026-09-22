@@ -61,3 +61,34 @@ def test_registers_artifact_and_verifies() -> None:
 
     assert paths == ["/v1/documents/doc-1/artifacts", "/v1/documents/doc-1/verify"]
     assert result["status"] == "verified"
+
+
+def test_schedules_deletion_and_restores_authoritative_acl() -> None:
+    observed: list[tuple[str, str, dict[str, object]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append((request.method, request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"status": "verified"})
+
+    with VectorLedgerClient(
+        "http://vectorledger", "acme", transport=httpx.MockTransport(handler)
+    ) as client:
+        client.delete_document("doc-1", version=4, mode="scheduled", grace_period_seconds=259200)
+        client.restore_document("doc-1", ["group:hr"], version=5)
+
+    assert observed == [
+        (
+            "POST",
+            "/v1/documents/doc-1/delete",
+            {
+                "version": 4,
+                "mode": "scheduled",
+                "grace_period_seconds": 259200,
+            },
+        ),
+        (
+            "POST",
+            "/v1/documents/doc-1/restore",
+            {"allowed_principals": ["group:hr"], "version": 5},
+        ),
+    ]

@@ -10,14 +10,14 @@ body:
     id: version
     attributes:
       label: VectorLedger version
-      placeholder: v0.1.0 or commit SHA
+      placeholder: v0.2.0 or commit SHA
     validations:
       required: true
   - type: dropdown
     id: connector
     attributes:
       label: Connector
-      options: [PostgreSQL, Qdrant, Redis, Control plane, Other]
+      options: [PostgreSQL, Qdrant, Redis, Scheduled deletion / ACL, Control plane, Other]
     validations:
       required: true
   - type: textarea

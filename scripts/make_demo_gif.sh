@@ -23,16 +23,20 @@ make_frame() {
 }
 
 make_frame 1 'docker compose up -d' $'Starting postgres ... done\nStarting qdrant  ... done\nStarting redis    ... done\nStarting vectorledger ... done'
-make_frame 2 'docker compose --profile demo run --rm demo' $'Seeded salary-policy.pdf\n\nPostgreSQL: 1 chunk\nQdrant:    1 unregistered vector\nRedis:     1 cached answer'
-make_frame 3 'vectorledger delete salary-policy --tenant acme' $'Tombstone version 2 accepted\n\nDiscovering records by tenant_id + document_id ...\nDeleting derived copies ...\nRunning independent verification scan ...'
-make_frame 4 'vectorledger verify salary-policy --tenant acme' $'POSTGRES   CLEAN   deleted=1   remaining=0\nQDRANT     CLEAN   deleted=1   remaining=0\nREDIS      CLEAN   deleted=1   remaining=0'
-make_frame 5 'receipt status' $'VERIFIED DELETED\n\nAll configured stores are clean.\nSigned receipt persisted for audit.'
+make_frame 2 'docker compose --profile demo run --rm demo' $'Seeded two documents with unregistered derived data\n\nPostgreSQL: 2 chunks\nQdrant:    2 vectors\nRedis:     2 cached answers'
+make_frame 3 'vectorledger delete salary-policy --tenant acme' $'MODE: IMMEDIATE\n\nDiscovering by tenant_id + document_id ...\nDeleting chunks, vectors, and cache entries ...\nVerification: VERIFIED DELETED'
+make_frame 4 'vectorledger delete benefits-handbook --mode scheduled' $'MODE: SCHEDULED    purge_after: +3 days\n\nPostgreSQL ACL: []\nQdrant ACL:    []\nRedis cache:   invalidated'
+make_frame 5 'scheduled receipt' $'VERIFIED PENDING_DELETION\n\nConfigured stores are quarantined now.\nThis is not yet a hard-deletion receipt.'
+make_frame 6 'vectorledger restore benefits-handbook -p employee:alice' $'PostgreSQL ACL restored\nQdrant ACL restored\nRedis cache regenerates on demand\n\nreingestion_required: false'
+make_frame 7 'two explicit guarantees' $'IMMEDIATE  -> VERIFIED DELETED\nSCHEDULED  -> VERIFIED QUARANTINE -> DELETE LATER\n\nSigned receipts preserve the distinction.'
 
 convert -delay 90 "$work_dir/frame-1.png" \
   -delay 110 "$work_dir/frame-2.png" \
   -delay 130 "$work_dir/frame-3.png" \
   -delay 150 "$work_dir/frame-4.png" \
-  -delay 220 "$work_dir/frame-5.png" \
+  -delay 140 "$work_dir/frame-5.png" \
+  -delay 150 "$work_dir/frame-6.png" \
+  -delay 220 "$work_dir/frame-7.png" \
   -loop 0 -layers Optimize "$output"
 
 echo "Wrote $output"

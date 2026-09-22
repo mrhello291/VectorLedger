@@ -45,9 +45,7 @@ async def test_discover_returns_empty_for_empty_final_page() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"result": {"points": []}})
 
-    connector = QdrantConnector(
-        "http://qdrant", "chunks", timeout=10.0
-    )
+    connector = QdrantConnector("http://qdrant", "chunks", timeout=10.0)
     await connector.client.aclose()
     connector.client = httpx.AsyncClient(
         base_url="http://qdrant", transport=httpx.MockTransport(handler)

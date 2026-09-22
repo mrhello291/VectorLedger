@@ -39,8 +39,15 @@ class MemoryStore:
     async def add_artifact(self, artifact: Artifact) -> Artifact:
         async with self._lock:
             existing = self.artifacts.get(artifact.artifact_id)
-            if existing and existing != artifact:
-                raise ValueError(f"artifact id {artifact.artifact_id} already exists")
+            if existing and (
+                existing.tenant_id != artifact.tenant_id
+                or existing.document_id != artifact.document_id
+                or existing.target != artifact.target
+                or artifact.document_version < existing.document_version
+            ):
+                raise ValueError(
+                    f"artifact id {artifact.artifact_id} belongs to different or newer lineage"
+                )
             self.artifacts[artifact.artifact_id] = replace(artifact)
             return replace(artifact)
 

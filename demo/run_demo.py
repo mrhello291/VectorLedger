@@ -15,7 +15,8 @@ POSTGRES = os.environ.get(
 QDRANT = os.environ.get("VL_QDRANT_URL", "http://localhost:6333")
 REDIS = os.environ.get("VL_REDIS_URL", "redis://localhost:6379/0")
 HEADERS = {"X-Tenant-ID": "acme"}
-DOCUMENT_ID = "salary-policy"
+IMMEDIATE_DOCUMENT = "salary-policy"
+SCHEDULED_DOCUMENT = "benefits-handbook"
 
 
 def wait_for_api() -> None:
@@ -29,7 +30,13 @@ def wait_for_api() -> None:
     raise RuntimeError("VectorLedger API did not become ready")
 
 
-def seed_targets() -> None:
+def seed_target(
+    document_id: str,
+    chunk_id: str,
+    point_id: int,
+    body: str,
+    principal: str,
+) -> None:
     with psycopg.connect(POSTGRES) as connection:
         connection.execute(
             """INSERT INTO rag_chunks
@@ -37,11 +44,11 @@ def seed_targets() -> None:
                VALUES (%s, %s, %s, %s, %s)
                ON CONFLICT (chunk_id) DO UPDATE SET body = EXCLUDED.body""",
             (
-                "chunk-1",
+                chunk_id,
                 "acme",
-                "salary-policy",
-                "Salary bands are...",
-                ["employee:alice"],
+                document_id,
+                body,
+                [principal],
             ),
         )
 
@@ -57,12 +64,12 @@ def seed_targets() -> None:
         json={
             "points": [
                 {
-                    "id": 1,
+                    "id": point_id,
                     "vector": [0.1, 0.2, 0.3, 0.4],
                     "payload": {
                         "tenant_id": "acme",
-                        "document_id": "salary-policy",
-                        "allowed_principals": ["employee:alice"],
+                        "document_id": document_id,
+                        "allowed_principals": [principal],
                     },
                 }
             ]
@@ -70,44 +77,83 @@ def seed_targets() -> None:
         timeout=10,
     ).raise_for_status()
     redis.Redis.from_url(REDIS).set(
-        "vl:acme:salary-policy:answer:123", "The salary band is confidential"
+        f"vl:acme:{document_id}:answer:123",
+        f"Cached answer for {document_id}",
     )
+
+
+def register_document(document_id: str, version: int, principal: str) -> None:
+    response = httpx.post(
+        f"{API}/v1/documents",
+        headers=HEADERS,
+        json={
+            "document_id": document_id,
+            "version": version,
+            "source_uri": f"s3://acme-private/{document_id}.pdf",
+            "allowed_principals": [principal],
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
 
 
 def main() -> None:
     wait_for_api()
-    seed_targets()
     version = int(time.time())
+    principal = "employee:alice"
 
-    created = httpx.post(
-        f"{API}/v1/documents",
-        headers=HEADERS,
-        json={
-            "document_id": DOCUMENT_ID,
-            "version": version,
-            "source_uri": "s3://acme-private/salary-policy.pdf",
-            "allowed_principals": ["employee:alice"],
-        },
-        timeout=10,
+    seed_target(
+        IMMEDIATE_DOCUMENT,
+        "chunk-immediate",
+        1,
+        "Salary bands are...",
+        principal,
     )
-    created.raise_for_status()
-    print("Seeded a document and derived data in PostgreSQL, Qdrant, and Redis.")
-    print("No artifacts were registered: this demonstrates metadata discovery.")
+    seed_target(
+        SCHEDULED_DOCUMENT,
+        "chunk-scheduled",
+        2,
+        "Benefits policy is...",
+        principal,
+    )
+    register_document(IMMEDIATE_DOCUMENT, version, principal)
+    register_document(SCHEDULED_DOCUMENT, version, principal)
+    print("Seeded two documents across PostgreSQL, Qdrant, and Redis.")
+    print("No artifacts were registered: discovery relies on stable metadata.")
 
     deleted = httpx.post(
-        f"{API}/v1/documents/{DOCUMENT_ID}/delete",
+        f"{API}/v1/documents/{IMMEDIATE_DOCUMENT}/delete",
         headers=HEADERS,
-        json={"version": version + 1},
+        json={"version": version + 1, "mode": "immediate"},
         timeout=30,
     )
     deleted.raise_for_status()
-    print("\nDeletion receipt:\n")
+    print("\nImmediate-deletion receipt:\n")
     print(json.dumps(deleted.json(), indent=2))
 
-    verified = httpx.get(f"{API}/v1/documents/{DOCUMENT_ID}/verify", headers=HEADERS, timeout=30)
-    verified.raise_for_status()
-    print("\nIndependent follow-up verification:\n")
-    print(json.dumps(verified.json(), indent=2))
+    scheduled = httpx.post(
+        f"{API}/v1/documents/{SCHEDULED_DOCUMENT}/delete",
+        headers=HEADERS,
+        json={
+            "version": version + 1,
+            "mode": "scheduled",
+            "grace_period_seconds": 259_200,
+        },
+        timeout=30,
+    )
+    scheduled.raise_for_status()
+    print("\nScheduled-deletion quarantine receipt:\n")
+    print(json.dumps(scheduled.json(), indent=2))
+
+    restored = httpx.post(
+        f"{API}/v1/documents/{SCHEDULED_DOCUMENT}/restore",
+        headers=HEADERS,
+        json={"version": version + 2, "allowed_principals": [principal]},
+        timeout=30,
+    )
+    restored.raise_for_status()
+    print("\nRestoration result (chunks reused, cache will regenerate):\n")
+    print(json.dumps(restored.json(), indent=2))
 
 
 if __name__ == "__main__":

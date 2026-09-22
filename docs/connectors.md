@@ -30,7 +30,10 @@ Uses payload filters containing `tenant_id` and `document_id`. Deletion and payl
 
 ### Redis
 
-Discovers keys using `vl:{tenant_id}:{document_id}:*`. Permission changes invalidate caches instead of attempting to rewrite cached authorization decisions.
+Discovers keys using `vl:{encoded_tenant_id}:{encoded_document_id}:*`. Use
+`RedisConnector.namespace(tenant_id, document_id)` when constructing cache keys so
+separators and glob characters cannot change reconciliation scope. Permission changes
+invalidate caches instead of attempting to rewrite cached authorization decisions.
 
 ## Adding a connector
 

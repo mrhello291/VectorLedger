@@ -19,6 +19,7 @@ jobs:
           cache: pip
       - run: pip install -e '.[dev]'
       - run: ruff check .
+      - run: ruff format --check .
       - run: mypy src
       - run: pytest --cov=vectorledger --cov-report=term-missing
       - run: docker build .
