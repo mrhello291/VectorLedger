@@ -234,6 +234,19 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
                 Artifact("x", "acme", "unknown", 1, "qdrant", {"id": "x"})
             )
 
+    async def test_artifact_id_cannot_be_reassigned_to_another_tenant(self) -> None:
+        await self.service.register_artifact(
+            Artifact("shared-id", "acme", "handbook", 1, "qdrant", {"id": "one"})
+        )
+        await self.service.register_document(
+            Document("other", "handbook", 1, "s3://other/handbook.pdf")
+        )
+
+        with self.assertRaises(ValueError):
+            await self.service.register_artifact(
+                Artifact("shared-id", "other", "handbook", 1, "qdrant", {"id": "two"})
+            )
+
     async def test_document_version_cannot_move_backwards(self) -> None:
         with self.assertRaises(ValueError):
             await self.service.register_document(

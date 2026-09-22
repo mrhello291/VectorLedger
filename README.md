@@ -19,9 +19,16 @@ flowchart LR
     I --> Q[(Vector database)]
     I --> R[(Cache)]
     S -- delete / ACL event --> V[VectorLedger]
-    V -- reconcile --> P
-    V -- reconcile --> Q
-    V -- invalidate --> R
+    V --> M{Lifecycle mode}
+    M -- immediate --> D[Hard delete now]
+    M -- scheduled --> X[Empty ACL + invalidate cache]
+    X -- deadline passes --> D
+    D --> P
+    D --> Q
+    D --> R
+    X --> P
+    X --> Q
+    X --> R
     P & Q & R -- independent scan --> V
     V --> A[Signed verification receipt]
 ```
@@ -49,7 +56,7 @@ docker compose up --build -d
 docker compose --profile demo run --rm demo
 ```
 
-The demo deliberately writes data directly into PostgreSQL, Qdrant, and Redis without registering artifact locations. It then registers only the source document and requests deletion. VectorLedger discovers the derived records through `tenant_id` and `document_id`, deletes them, scans again, and returns a signed receipt.
+The demo deliberately writes two documents directly into PostgreSQL, Qdrant, and Redis without registering artifact locations. It proves immediate hard deletion for one document, then quarantines and restores the other without rebuilding its chunks. VectorLedger discovers both through `tenant_id` and `document_id` and emits signed receipts for each distinct guarantee.
 
 Open the API documentation at [http://localhost:8080/docs](http://localhost:8080/docs).
 
@@ -156,7 +163,7 @@ vectorledger serve
 Or run the published container:
 
 ```bash
-docker pull ghcr.io/mrhello291/vectorledger:0.1.0
+docker pull ghcr.io/mrhello291/vectorledger:0.2.0
 ```
 
 Run quality checks:
@@ -190,7 +197,7 @@ For scheduled deletion, a `verified` receipt with `desired_state: pending_deleti
 proves quarantine—not hard deletion. After `purge_after`, anti-entropy transitions the
 document to `deleted`, removes the artifacts, and emits a deletion receipt.
 
-See [architecture](docs/architecture.md), [connector contract](docs/connectors.md), and [security model](SECURITY.md).
+See [architecture](docs/architecture.md), [permission integration](docs/permissions.md), [connector contract](docs/connectors.md), and [security model](SECURITY.md).
 
 ## How it differs
 
@@ -217,7 +224,7 @@ See the [roadmap](ROADMAP.md) for Azure AI Search, Elasticsearch, Milvus, retrie
 
 ## Current boundaries
 
-This is an MVP, not a compliance certification. HMAC receipts prove possession of the configured secret, not an independent third-party timestamp. Retrieval-path probes, KMS/asymmetric signatures, source watchers, durable job leases, pagination beyond the first 256 Qdrant points, and more connectors are logical next milestones.
+This is an MVP, not a compliance certification. HMAC receipts prove possession of the configured secret, not an independent third-party timestamp. Retrieval-path probes, KMS/asymmetric signatures, source watchers, durable job leases, tenant-aware authorization, and more connectors are logical next milestones.
 
 ## Contributing
 

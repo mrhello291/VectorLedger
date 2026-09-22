@@ -106,10 +106,15 @@ class PostgresStore:
                  state, last_error, updated_at)
             VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)
             ON CONFLICT (artifact_id) DO UPDATE SET
+                document_version = EXCLUDED.document_version,
                 locator = EXCLUDED.locator,
                 state = EXCLUDED.state,
                 last_error = EXCLUDED.last_error,
                 updated_at = EXCLUDED.updated_at
+            WHERE vl_artifacts.tenant_id = EXCLUDED.tenant_id
+              AND vl_artifacts.document_id = EXCLUDED.document_id
+              AND vl_artifacts.target = EXCLUDED.target
+              AND vl_artifacts.document_version <= EXCLUDED.document_version
             RETURNING *
         """
         async with (
@@ -131,7 +136,10 @@ class PostgresStore:
                 ),
             )
             row = await cursor.fetchone()
-        assert row is not None
+        if row is None:
+            raise ValueError(
+                f"artifact id {artifact.artifact_id} belongs to different or newer lineage"
+            )
         return self._artifact(row)
 
     async def list_artifacts(self, key: DocumentKey) -> list[Artifact]:

@@ -10,3 +10,9 @@ python examples/langchain/tracked_ingestion.py
 ```
 
 Replace the illustrative `add_to_your_vector_store` function with the vector store already used by your application.
+
+The source connector remains responsible for reading the authoritative ACL and passing
+stable user or group IDs in `allowed_principals`. See the
+[permission integration guide](../../docs/permissions.md). When handling lifecycle
+events, call `delete_document(..., mode="scheduled")` for reversible quarantine or
+leave the default `immediate` mode for hard deletion.

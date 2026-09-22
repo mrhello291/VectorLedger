@@ -109,7 +109,7 @@ def create_app(
 
     app = FastAPI(
         title="VectorLedger",
-        version="0.1.0",
+        version="0.2.0",
         description="Reconciliation and deletion verification for RAG data stores.",
         lifespan=lifespan,
     )

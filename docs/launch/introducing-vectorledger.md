@@ -12,11 +12,19 @@ Most deletion jobs stop after a target API returns success. VectorLedger perform
 
 If Qdrant is unavailable, the receipt fails and the anti-entropy worker retries later. If an embedding was never registered in the lineage table but still carries `tenant_id` and `document_id`, metadata discovery can find it. If permissions change, stores that support ACL metadata are updated while unsafe caches are invalidated.
 
+Version 0.2 adds two explicit deletion modes. Immediate mode remains the default and
+hard-deletes derived data. Scheduled mode first quarantines records with an empty ACL,
+invalidates caches, and hard-deletes after a deadline. It is intentionally opt-in:
+the application's retrieval layer must already enforce those ACL fields and treat an
+empty ACL as deny-all. A restore before the deadline reuses the quarantined chunks;
+after hard deletion, VectorLedger tells the ingestion pipeline that regeneration is
+required.
+
 ## What the first release includes
 
 Version 0.1.0 includes a PostgreSQL control-plane ledger, connectors for PostgreSQL chunk tables, Qdrant, and Redis, periodic reconciliation, signed HMAC receipts, a REST API, a CLI, and a complete Docker Compose demonstration.
 
-The demo deliberately creates one unregistered record in each target. VectorLedger receives only the source document identity, discovers all three records, removes them, scans again, and emits a signed receipt showing zero remaining records.
+The current demo creates two unregistered records in each target. VectorLedger receives only the source identities, proves immediate deletion for one document, and demonstrates scheduled quarantine plus restoration for the other.
 
 ## Why open source?
 
@@ -26,7 +34,7 @@ An open connector contract also makes the guarantee inspectable. Operators shoul
 
 ## What comes next
 
-The next priorities are Azure AI Search, Elasticsearch/OpenSearch, complete pagination, durable multi-replica job leases, OpenTelemetry, retrieval-path probes, and KMS-backed asymmetric signatures.
+The next priorities are tenant-aware authorization, Microsoft Graph/SharePoint and Azure AI Search connectors, Elasticsearch/OpenSearch, durable multi-replica job leases, OpenTelemetry, retrieval-path probes, and KMS-backed asymmetric signatures.
 
 VectorLedger is an MVP, not a compliance certificate. It cannot find opaque copies with no stable lineage metadata, content exported outside configured systems, backups, or memorized model weights. Those boundaries are documented because deletion proofs are only useful when their scope is explicit.
 
